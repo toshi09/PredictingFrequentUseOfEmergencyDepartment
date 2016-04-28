@@ -1,4 +1,8 @@
-from column_index_map import *
+'''
+The code finds unique patients with ANY amission per year and their visit distribution
+'''
+
+column_index_map import *
 from collections import  defaultdict
 
 def visit_count(visits):
