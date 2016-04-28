@@ -1,3 +1,7 @@
+'''
+The code finds unique patients with ED admission per year and their visit distribution
+'''
+
 from column_index_map import *
 from collections import  defaultdict
 
