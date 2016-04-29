@@ -94,9 +94,9 @@ def featurize(file_name, out_file, year, predictor_year, category_visit_count_th
     prev_id = ''
     age_dist = defaultdict(int)
     out_h = open(out_file, 'wb')
-    header  = ['PID', 'gender','race_grp', 'distance_<=5', 'distance_6_20', 'distance_>20',
+    header  = ['rln', 'gender','race_grp', 'distance_<=5', 'distance_6_20', 'distance_>20',
                 'age_<5', 'age_5-14', 'age_15-24',   'age_25-44','age_45-64','age_>=65',
-               'NUM_ADMIT_'+year,'NUM_EDADM_'+year,'category_>='+str(category_visit_count_threshold)]
+               'NUM_ADMIT_'+year,'NUM_EDADMIT_'+year,'category_>='+str(category_visit_count_threshold)]
 
     out_h.write(",".join(header) + "\n")
     visit_distribution_per_patient = defaultdict(int)
