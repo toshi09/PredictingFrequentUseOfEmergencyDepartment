@@ -1,3 +1,5 @@
+
+    
 from column_index_map import *
 import sys
 import pickle
@@ -148,7 +150,7 @@ def featurize(file_name, out_file, year, predictor_year, category_visit_count_th
 
             visit_distribution_per_patient[visit_year] += 1
 
-            if visit_year == year:
+            if src_type == '1' and visit_year == year:
                 if get_dist(pat_zip, hsp_zip):
                     missing_zip += 1
                 update_dist_dist(dist_dist, pat_zip, hsp_zip)
@@ -162,6 +164,7 @@ def featurize(file_name, out_file, year, predictor_year, category_visit_count_th
     print missing_zip
     out_h.close()
     return age_dist
+
 
 
 base_file_name = "/Users/oshpddata/Desktop/OSHPD2016/OSHPD_ALLCAUSE.csv"
