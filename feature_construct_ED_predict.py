@@ -1,26 +1,49 @@
-
-    
-from column_index_map import *
-import sys
-import pickle
+from column_index_map_2 import *
 from collections import  defaultdict
 from math import sin, cos, radians, degrees, acos
 
+
 # library which converts zip code to latitude and longitude
 from pyzipcode import ZipCodeDatabase
+import icd9_map
 
-from collections import namedtuple
-
+# The zipcode database
 zip_db = ZipCodeDatabase()
 
-def get_age_columns(age):
+# Comorbidity codes from the ICD-9 map defined in icd9_map
+# http://czresearch.com/dropbox/Elixhauser_MedCare_1998v36p8.pdf
+COMORBID_COLS = icd9_map.get_comorbidities()
+
+def get_comorbid_list(pat_row):
     """
-    Returns a vector with correct age index
+    From a patient, iterate over diagonsis indexes
+    :0 to 25 to get the ICD_9 codes.
+    For each of the ICD_9 codes find the comorbidity.
+    Return a list of comorbidities for a
+    patient at a particular visit.
+    """
+    disease_list = []
+    for idx in range(0, 25):
+        code = pat_row[idx]
+        if not code:
+            # columns can have no values.
+            continue
+        if code not in icd9_map.icd_9_processed_map:
+            continue
+        else:
+            disease_list.append(icd9_map.icd_9_processed_map[code])
+    return disease_list
+
+def get_age_vector(age):
+    """
+    Based on the age, returns a vector with correct age index
     set to 1
     :param age:
     :return:
     """
-    age_cols = [0 for xx in range(6) ]
+
+    age_cols = [0 for xx in range(6)] # list of six elements, all set to 0
+
     if age < 5 :
         age_cols[0] = 1
     elif age >= 5 and age < 15:
@@ -37,10 +60,13 @@ def get_age_columns(age):
     return age_cols
 
 
-def get_visit_dist_column(visit_distribution_per_patient ,year):
+def get_visit_count_vector(visit_distribution_per_patient, year):
     """
-    :param visit_distribution_per_patient:
-    :return:
+    Return a list with single element containing
+    number of visits for year in the
+    visit_distribution_per_patient.
+    visit_distribution_per_patient can be either
+    of ED type or ANY visit types.
     """
     visit_col = [0]
     visit_col[0] = visit_distribution_per_patient[year]
@@ -68,8 +94,8 @@ def calc_dist(lat_a, long_a, lat_b, long_b):
 def get_dist(hsp_zip, pat_zip):
     """
     Get this distance in miles between zip code.
-    :param hsp_zip:
-    :param pat_zip:
+    :param hsp_zip: Hospital zip code
+    :param pat_zip: Patient zip code
     :return:
     """
     try:
@@ -79,34 +105,88 @@ def get_dist(hsp_zip, pat_zip):
     except:
         return None
 
-def update_dist_dist(dist_dict, pat_lat, hsp_lat):
-    distance = get_dist(pat_lat, hsp_lat)
+def update_distance_distribution(distance_distribution, pat_zip_code, hsp_zip_code):
+    """
+    Distance distribution is count of following categories of distances
+    <=5, >5 and <=20 , > 20.
+    This function updates the distribution with the distance between
+    pat_zip and hsp_zip.
+    :param distance_distribution:
+    :param pat_zip_code:
+    :param hsp_zip_code:
+    :return:
+    """
+    distance = get_dist(pat_zip_code, hsp_zip_code)
     if distance is None:
         #print 'Zip code not found ', pat_lat, hsp_lat
         return
     dist = abs(distance)
     if dist <= 5:
-        dist_dict[5] += 1.0
+        distance_distribution[5] += 1.0
     elif dist > 5 and dist <= 20:
-        dist_dict['5-20'] += 1.0
+        distance_distribution['5-20'] += 1.0
     else:
-        dist_dict['20'] += 1.0
+        distance_distribution['20'] += 1.0
 
-def featurize(file_name, out_file, year, predictor_year, category_visit_count_threshold):
-    prev_id = ''
-    age_dist = defaultdict(int)
+def update_comorbid_dist(comorbid_dist, disease_lst):
+    """
+    Updates the comorbid distribution with the
+    diseases in the disease list.
+    :param comorbid_dist: Map of disease to number of time
+    it was observed.
+    :param disease_lst: List of disease observed in a visit.
+    :return:
+    """
+    for disease in disease_lst:
+        comorbid_dist[disease] += 1.0
+
+def get_comorbid_vector(comorbid_distribution, num_visits):
+    """
+    Return a vector of COMORBIDitie with
+    vector indexes set to number of times each
+    comorbidity has been observerd in set of visits.
+    :param comorbid_distribution:
+    :param num_visits:
+    :return:
+    """
+    columns = [0.0 for xx in COMORBID_COLS]
+    for idx, disease in enumerate(COMORBID_COLS):
+        if disease in comorbid_distribution:
+            columns[idx] = comorbid_distribution[disease] / num_visits
+    return columns
+
+def featurize(file_name, out_file, base_year, predictor_year, category_visit_count_threshold):
+    """
+    Generates the file which will be used for modeling
+    :param file_name: OSHPD data (OSHPD_CLEAN.csv)
+    :param out_file: output file.
+    :param base_year: THe base year from which will construct our feature vectors
+    :param predictor_year:
+    :param category_visit_count_threshold:
+    :return:
+    """
     out_h = open(out_file, 'wb')
     header  = ['rln', 'gender','race_grp', 'distance_<=5', 'distance_6_20', 'distance_>20',
                 'age_<5', 'age_5-14', 'age_15-24',   'age_25-44','age_45-64','age_>=65',
-               'NUM_ADMIT_'+year,'NUM_EDADMIT_'+year,'category_>='+str(category_visit_count_threshold)]
+               'NUM_ADMIT_' + base_year, 'NUM_EDADMIT_' + base_year] + \
+              COMORBID_COLS + \
+              ['category_>='+str(category_visit_count_threshold)]
 
     out_h.write(",".join(header) + "\n")
+    
+    prev_id = ''
+    # Per year visit counts
     visit_distribution_per_patient = defaultdict(int)
+    # Per year ED type visit count
     ed_visit_distribution_per_patient = defaultdict(int)
-    dist_dist = defaultdict(float)
-    missing_zip = 0
+
+    # Distance count for the base year
+    distance_distribution = defaultdict(float)
+    # Comorbidities count for the base year.
+    comorbid_distribution = defaultdict(float)
+
     with open(file_name) as fd:
-        fd.readline()
+        fd.readline() # skip header
 
         for line in fd:
             values = line.strip("\n").split(",")
@@ -122,27 +202,32 @@ def featurize(file_name, out_file, year, predictor_year, category_visit_count_th
             if prev_id and pid != prev_id:
                 age_as_per_last_vist = int(prev_visit_year) - int(prev_birth_year)
 
-                age_cols = get_age_columns(age_as_per_last_vist)
-                visit_col = get_visit_dist_column(visit_distribution_per_patient , year)
-                ed_visit_col  = get_visit_dist_column(ed_visit_distribution_per_patient, year)
+                age_cols = get_age_vector(age_as_per_last_vist)
 
-                total_visits = visit_distribution_per_patient[year]
+                visit_col = get_visit_count_vector(visit_distribution_per_patient, base_year)
+                ed_visit_col  = get_visit_count_vector(ed_visit_distribution_per_patient, base_year)
+
+                ed_total_visits = ed_visit_distribution_per_patient[base_year]
+
                 predictor_year_visit_cnt = ed_visit_distribution_per_patient[predictor_year]
-
                 category = 1 if predictor_year_visit_cnt >= category_visit_count_threshold else 0
-                #print ed_visit_distribution_per_patient
-                if ed_visit_distribution_per_patient[year] > 0:
 
-                    row = [prev_id, prev_gender, prev_race_group] + [dist_dist['5'] / total_visits,
-                                                      dist_dist['5-20'] / total_visits,
-                                                      dist_dist['20'] / total_visits,] + \
-                      age_cols + visit_col + ed_visit_col + [category]
+                if ed_visit_distribution_per_patient[base_year] > 0:
+                    # We only write a row to output file if there is atleast one ED visit from customer.
+                    disease_cols = get_comorbid_vector(comorbid_distribution, ed_total_visits)
+                    row = [prev_id, prev_gender, prev_race_group] + \
+                          [distance_distribution['5'] / ed_total_visits, distance_distribution['5-20'] / ed_total_visits, distance_distribution['20'] / ed_total_visits] + \
+                           age_cols + visit_col + ed_visit_col + disease_cols + \
+                          [category]
 
+                    assert len(row) == len(header)
                     out_h.write(",".join([str(xx) for xx in row]) + "\n")
 
+                # Reset important distribution maps
                 visit_distribution_per_patient = defaultdict(int)
                 ed_visit_distribution_per_patient = defaultdict(int)
-                dist_dist = defaultdict(float)
+                distance_distribution = defaultdict(float)
+                comorbid_distribution = defaultdict(float)
 
 
             if src_type == '1':
@@ -150,10 +235,10 @@ def featurize(file_name, out_file, year, predictor_year, category_visit_count_th
 
             visit_distribution_per_patient[visit_year] += 1
 
-            if src_type == '1' and visit_year == year:
-                if get_dist(pat_zip, hsp_zip):
-                    missing_zip += 1
-                update_dist_dist(dist_dist, pat_zip, hsp_zip)
+            if src_type == '1' and visit_year == base_year:
+                update_distance_distribution(distance_distribution, pat_zip, hsp_zip)
+                ds_lst = get_comorbid_list(values)
+                update_comorbid_dist(comorbid_distribution, ds_lst)
 
             prev_id = pid
             prev_visit_year = visit_year
@@ -161,11 +246,25 @@ def featurize(file_name, out_file, year, predictor_year, category_visit_count_th
             prev_birth_year = birth_yr
             prev_race_group = race_grp
 
-    print missing_zip
+    # The last patient info was not written. Following just does that.
+    if ed_visit_distribution_per_patient[base_year] > 0:
+        age_as_per_last_vist = int(prev_visit_year) - int(prev_birth_year)
+        age_cols = get_age_vector(age_as_per_last_vist)
+        visit_col = get_visit_count_vector(visit_distribution_per_patient, base_year)
+        ed_visit_col  = get_visit_count_vector(ed_visit_distribution_per_patient, base_year)
+
+        disease_cols = get_comorbid_vector(comorbid_distribution, ed_total_visits)
+        ed_total_visits = ed_visit_distribution_per_patient[base_year]
+        row = [prev_id, prev_gender, prev_race_group] + \
+               [distance_distribution['5'] / ed_total_visits, distance_distribution['5-20'] / ed_total_visits, distance_distribution['20'] / ed_total_visits] + \
+                age_cols + visit_col + ed_visit_col + disease_cols + \
+                [category]
+
+        assert len(row) == len(header)
+        out_h.write(",".join([str(xx) for xx in row]) + "\n")
+
     out_h.close()
-    return age_dist
 
 
-
-base_file_name = "/Users/oshpddata/Desktop/OSHPD2016/OSHPD_ALLCAUSE.csv"
-featurize(base_file_name, "OSHPD_MASTER_2009.csv", '2009', '2010', 8)
+base_file_name = "/Users/oshpddata/Desktop/OSHPD2016/OSHPD_CLEAN.csv"
+featurize(base_file_name, "t.csv", '2009', '2010', 8)
