@@ -12,7 +12,7 @@ zip_db = ZipCodeDatabase()
 
 # Comorbidity codes from the ICD-9 map defined in icd9_map
 # http://czresearch.com/dropbox/Elixhauser_MedCare_1998v36p8.pdf
-COMORBID_COLS = icd9_map.get_comorbidities()
+COMORBID_COLS = icd9_map.get_comorbidities() + ["ELIX_unclassified"]
 
 def get_comorbid_list(pat_row):
     """
@@ -29,7 +29,7 @@ def get_comorbid_list(pat_row):
             # columns can have no values.
             continue
         if code not in icd9_map.icd_9_processed_map:
-            continue
+            disease_list.append("ELIX_unclassified")
         else:
             disease_list.append(icd9_map.icd_9_processed_map[code])
     return disease_list
@@ -122,7 +122,7 @@ def update_distance_distribution(distance_distribution, pat_zip_code, hsp_zip_co
         return
     dist = abs(distance)
     if dist <= 5:
-        distance_distribution[5] += 1.0
+        distance_distribution['5'] += 1.0
     elif dist > 5 and dist <= 20:
         distance_distribution['5-20'] += 1.0
     else:
@@ -166,11 +166,11 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
     :return:
     """
     out_h = open(out_file, 'wb')
-    header  = ['rln', 'gender','race_grp', 'distance_<=5', 'distance_6_20', 'distance_>20',
-                'age_<5', 'age_5-14', 'age_15-24',   'age_25-44','age_45-64','age_>=65',
+    header  = ['rln', 'gender','race_grp', 'distance_lt_eq_5', 'distance_6_20', 'distance_gt_20',
+                'age_lt_5', 'age_5_14', 'age_15_24',   'age_25_44','age_45_64','age_gt_eq_65',
                'NUM_ADMIT_' + base_year, 'NUM_EDADMIT_' + base_year] + \
               COMORBID_COLS + \
-              ['category_>='+str(category_visit_count_threshold)]
+              ['category_gt_eq_'+str(category_visit_count_threshold)]
 
     out_h.write(",".join(header) + "\n")
     
@@ -267,4 +267,4 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
 
 
 base_file_name = "/Users/oshpddata/Desktop/OSHPD2016/OSHPD_CLEAN.csv"
-featurize(base_file_name, "t.csv", '2009', '2010', 8)
+featurize(base_file_name, "MLHC_ED_2009.csv", '2009', '2010', 4)
