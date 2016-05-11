@@ -52,7 +52,7 @@ def get_age_vector(age):
         age_cols[2] = 1
     elif age >= 25 and age < 44:
         age_cols[3] = 1
-    elif age_cols >= 45 and age_cols < 64:
+    elif age >= 45 and age_cols < 64:
         age_cols[4] = 1
     else:
         age_cols[5] = 1
