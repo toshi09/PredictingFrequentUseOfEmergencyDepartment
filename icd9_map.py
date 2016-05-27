@@ -294,7 +294,8 @@ for key, value in ICD9_RAW_MAP.items():
     # icd-9 code can be single value or range of values,
     # e.g: 345.6 or "305.20-305.93"
     if "-" not in key:
-        icd_9_processed_map[key.strip().replace(".", "")] = value
+        icd_9_processed_map[key.strip().replace(".", "")] = value #taking out decimal point 
+                                                                    #from code that are not a range of codes
         continue
 
     # The icd-9 code is range, e.g: "305.20-305.93"
