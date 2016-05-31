@@ -6,13 +6,19 @@ from math import sin, cos, radians, degrees, acos
 # library which converts zip code to latitude and longitude
 from pyzipcode import ZipCodeDatabase
 import icd9_map
+import pandas
 
 # The zipcode database
-zip_db = ZipCodeDatabase()
+#zip_db = ZipCodeDatabase()
+import pyZipCode
 
 # Comorbidity codes from the ICD-9 map defined in icd9_map
 # http://czresearch.com/dropbox/Elixhauser_MedCare_1998v36p8.pdf
 COMORBID_COLS = icd9_map.get_comorbidities() + ["ELIX_unclassified"]
+
+#zip_frame = pandas.read_csv("zip_codes.csv")
+#zip_frame = zip_frame[['GEOID','INTPTLAT','INTPTLONG']]
+#ZIP_DICT = zip_frame.set_index('GEOID').T.to_dict('list')
 
 def get_comorbid_list(pat_row):
     """
@@ -100,17 +106,18 @@ def get_dist(hsp_zip, pat_zip):
     :return:
     """
     try:
-        int(hsp_zip)
-        int(pat_zip)
+        hsp = int(hsp_zip) # Get the latitude and longitude of hospital zipcode
+        pat = int(pat_zip) # Get the latitude and longitude of hospital zipcode
+
+        dist = pyZipCode.distanceMile(hsp, pat) #calc_dist(hsp[0], hsp[1], pat[0], pat[1])
+        if dist == 0.0:
+            return None
+        return dist
     except ValueError:
         global invalid_zip
         invalid_zip += 1
-    try:
-        hsp = zip_db[hsp_zip] # Get the latitude and longitude of hospital zipcode
-        pat = zip_db[pat_zip] # Get the latitude and longitude of hospital zipcode
-        return calc_dist(hsp.latitude, hsp.longitude, pat.latitude, pat.longitude)
-    except:
         return None
+    
 
 def update_distance_distribution(distance_distribution, pat_zip_code, hsp_zip_code):
     """
@@ -127,8 +134,9 @@ def update_distance_distribution(distance_distribution, pat_zip_code, hsp_zip_co
     if distance is None:
         #print 'Zip code not found ', pat_lat, hsp_lat
         return
+    #print distance
     dist = abs(distance)
-    if dist < 5:
+    if dist <= 5:
         distance_distribution['5'] += 1.0
     elif dist > 5 and dist <= 20:
         distance_distribution['5-20'] += 1.0
@@ -183,7 +191,6 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
     :param category_visit_count_threshold:
     :return:
     """
-
     out_h = open(out_file, 'wb')
     header  = ['rln', 'gender','race_grp', 'distance_lt_eq_5', 'distance_6_20', 'distance_gt_20',
                 'age_lt_5', 'age_5_14', 'age_15_24',   'age_25_44','age_45_64','age_gt_eq_65',
@@ -191,16 +198,13 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
               COMORBID_COLS + \
               ["MSDRG_0", "MSDRG_1", "MSDRG_2"] + \
               ['category_gt_eq_'+str(category_visit_count_threshold)] + \
-              ['ED_ADMIT_NEXT_VISIT_CNT_' + predictor_year,
-               'ED_ADMIT_NEXT_VISIT_CNT_BUCKET_'+ predictor_year]
+              ['ED_ADMIT_NEXT_VISIT_CNT_' + predictor_year, 'ED_ADMIT_NEXT_VISIT_CNT_BUCKET_'+ predictor_year]
 
     out_h.write(",".join(header) + "\n")
     
     prev_id = ''
-
     # Per year visit counts
     visit_distribution_per_patient = defaultdict(int)
-
     # Per year ED type visit count
     ed_visit_distribution_per_patient = defaultdict(int)
 
@@ -252,6 +256,7 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
                     elif predictor_year_visit_cnt >= 2 and predictor_year_visit_cnt <= 4:
                         predictor_year_visit_cnt_bucket = "2"
                     elif predictor_year_visit_cnt >= 5:
+
                         predictor_year_visit_cnt_bucket = "3"
 
                     row = [prev_id, prev_gender, prev_race_group] + \
@@ -307,10 +312,10 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
 
         assert len(row) == len(header)
         out_h.write(",".join([str(xx) for xx in row]) + "\n")
-    print "Total ED visits in year "+ str(visit_year) + "  " + str(total_count) + " Number of zip codes not found for these  vists "+ str(zip_code_not_found)
+    print "Total ED visits in year "+ str(base_year) + "  " + str(total_count) + " Number of zip codes not found for these  vists "+ str(zip_code_not_found)
     out_h.close()
 
 
-base_file_name = "/Users/vikhyati/Desktop/OSHPD_CLEAN_SMALL.csv"
-featurize(base_file_name, "t.csv", '2009', '2010', 4)
+base_file_name = "/Users/oshpddata/Desktop/OSHPD2016/OSHPD_CLEAN_FIXZIP.csv"
+featurize(base_file_name, "/Users/oshpddata/Desktop/vikhyati/MLHC_ED_2011.csv", '2011', '2012', 4)
 print invalid_zip
