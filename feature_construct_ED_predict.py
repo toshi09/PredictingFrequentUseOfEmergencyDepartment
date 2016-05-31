@@ -52,7 +52,7 @@ def get_age_vector(age):
         age_cols[2] = 1
     elif age >= 25 and age < 44:
         age_cols[3] = 1
-    elif age >= 45 and age_cols < 64:
+    elif age >= 45 and age < 64:
         age_cols[4] = 1
     else:
         age_cols[5] = 1
@@ -91,6 +91,7 @@ def calc_dist(lat_a, long_a, lat_b, long_b):
                 cos(lat_a) * cos(lat_b) * cos(long_diff))
     return degrees(acos(distance)) * 69.09
 
+invalid_zip = 0
 def get_dist(hsp_zip, pat_zip):
     """
     Get this distance in miles between zip code.
@@ -98,6 +99,12 @@ def get_dist(hsp_zip, pat_zip):
     :param pat_zip: Patient zip code
     :return:
     """
+    try:
+        int(hsp_zip)
+        int(pat_zip)
+    except ValueError:
+        global invalid_zip
+        invalid_zip += 1
     try:
         hsp = zip_db[hsp_zip] # Get the latitude and longitude of hospital zipcode
         pat = zip_db[pat_zip] # Get the latitude and longitude of hospital zipcode
@@ -121,7 +128,7 @@ def update_distance_distribution(distance_distribution, pat_zip_code, hsp_zip_co
         #print 'Zip code not found ', pat_lat, hsp_lat
         return
     dist = abs(distance)
-    if dist <= 5:
+    if dist < 5:
         distance_distribution['5'] += 1.0
     elif dist > 5 and dist <= 20:
         distance_distribution['5-20'] += 1.0
@@ -155,6 +162,17 @@ def get_comorbid_vector(comorbid_distribution, num_visits):
             columns[idx] = comorbid_distribution[disease] / num_visits
     return columns
 
+def  get_msdrg_severity_row(msdrg_severity_dist):
+    """
+    :param msdrg_severity_dist:
+    :return:
+    """
+    columns = [0, 0 , 0]
+    for idx in range(3):
+        columns[idx] = msdrg_severity_dist[str(idx)]
+
+    return columns
+
 def featurize(file_name, out_file, base_year, predictor_year, category_visit_count_threshold):
     """
     Generates the file which will be used for modeling
@@ -165,18 +183,24 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
     :param category_visit_count_threshold:
     :return:
     """
+
     out_h = open(out_file, 'wb')
     header  = ['rln', 'gender','race_grp', 'distance_lt_eq_5', 'distance_6_20', 'distance_gt_20',
                 'age_lt_5', 'age_5_14', 'age_15_24',   'age_25_44','age_45_64','age_gt_eq_65',
                'NUM_ADMIT_' + base_year, 'NUM_EDADMIT_' + base_year] + \
               COMORBID_COLS + \
-              ['category_gt_eq_'+str(category_visit_count_threshold)]
+              ["MSDRG_0", "MSDRG_1", "MSDRG_2"] + \
+              ['category_gt_eq_'+str(category_visit_count_threshold)] + \
+              ['ED_ADMIT_NEXT_VISIT_CNT_' + predictor_year,
+               'ED_ADMIT_NEXT_VISIT_CNT_BUCKET_'+ predictor_year]
 
     out_h.write(",".join(header) + "\n")
     
     prev_id = ''
+
     # Per year visit counts
     visit_distribution_per_patient = defaultdict(int)
+
     # Per year ED type visit count
     ed_visit_distribution_per_patient = defaultdict(int)
 
@@ -184,7 +208,10 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
     distance_distribution = defaultdict(float)
     # Comorbidities count for the base year.
     comorbid_distribution = defaultdict(float)
+    msdrg_severity_dist = defaultdict(float)
 
+    total_count = 0
+    zip_code_not_found = 0
     with open(file_name) as fd:
         fd.readline() # skip header
 
@@ -198,6 +225,7 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
             pat_zip = values[PATZIP_IDX]
             hsp_zip = values[HPLZIP_IDX]
             race_grp = values[RACE_GRP_IDX]
+            msdrg_severity = values[MSDRG_SEVERITY_IDX]
 
             if prev_id and pid != prev_id:
                 age_as_per_last_vist = int(prev_visit_year) - int(prev_birth_year)
@@ -207,7 +235,7 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
                 visit_col = get_visit_count_vector(visit_distribution_per_patient, base_year)
                 ed_visit_col  = get_visit_count_vector(ed_visit_distribution_per_patient, base_year)
 
-                ed_total_visits = ed_visit_distribution_per_patient[base_year]
+                ed_total_visits = ed_visit_distribution_per_patient[base_year] * 1.0
 
                 predictor_year_visit_cnt = ed_visit_distribution_per_patient[predictor_year]
                 category = 1 if predictor_year_visit_cnt >= category_visit_count_threshold else 0
@@ -215,10 +243,22 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
                 if ed_visit_distribution_per_patient[base_year] > 0:
                     # We only write a row to output file if there is atleast one ED visit from customer.
                     disease_cols = get_comorbid_vector(comorbid_distribution, ed_total_visits)
+                    msdrg_severity_col = get_msdrg_severity_row(msdrg_severity_dist)
+
+                    predictor_year_visit_cnt_bucket = "0"
+
+                    if predictor_year_visit_cnt == 1:
+                        predictor_year_visit_cnt_bucket = "1"
+                    elif predictor_year_visit_cnt >= 2 and predictor_year_visit_cnt <= 4:
+                        predictor_year_visit_cnt_bucket = "2"
+                    elif predictor_year_visit_cnt >= 5:
+                        predictor_year_visit_cnt_bucket = "3"
+
                     row = [prev_id, prev_gender, prev_race_group] + \
                           [distance_distribution['5'] / ed_total_visits, distance_distribution['5-20'] / ed_total_visits, distance_distribution['20'] / ed_total_visits] + \
                            age_cols + visit_col + ed_visit_col + disease_cols + \
-                          [category]
+                          [xx /ed_total_visits for xx in  msdrg_severity_col] +\
+                          [category] + [str(predictor_year_visit_cnt)] + [predictor_year_visit_cnt_bucket]
 
                     assert len(row) == len(header)
                     out_h.write(",".join([str(xx) for xx in row]) + "\n")
@@ -228,7 +268,7 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
                 ed_visit_distribution_per_patient = defaultdict(int)
                 distance_distribution = defaultdict(float)
                 comorbid_distribution = defaultdict(float)
-
+                msdrg_severity_dist = defaultdict(float)
 
             if src_type == '1':
                 ed_visit_distribution_per_patient[visit_year] += 1
@@ -236,15 +276,20 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
             visit_distribution_per_patient[visit_year] += 1
 
             if src_type == '1' and visit_year == base_year:
+                if not get_dist(pat_zip, hsp_zip):
+                    zip_code_not_found += 1
+                total_count += 1
                 update_distance_distribution(distance_distribution, pat_zip, hsp_zip)
                 ds_lst = get_comorbid_list(values)
                 update_comorbid_dist(comorbid_distribution, ds_lst)
+                msdrg_severity_dist[msdrg_severity] += 1
 
             prev_id = pid
             prev_visit_year = visit_year
             prev_gender = gender
             prev_birth_year = birth_yr
             prev_race_group = race_grp
+            prev_msdrg_severity = msdrg_severity
 
     # The last patient info was not written. Following just does that.
     if ed_visit_distribution_per_patient[base_year] > 0:
@@ -262,9 +307,10 @@ def featurize(file_name, out_file, base_year, predictor_year, category_visit_cou
 
         assert len(row) == len(header)
         out_h.write(",".join([str(xx) for xx in row]) + "\n")
-
+    print "Total ED visits in year "+ str(visit_year) + "  " + str(total_count) + " Number of zip codes not found for these  vists "+ str(zip_code_not_found)
     out_h.close()
 
 
-base_file_name = "/Users/oshpddata/Desktop/OSHPD2016/OSHPD_CLEAN.csv"
-featurize(base_file_name, "MLHC_ED_2009.csv", '2009', '2010', 4)
+base_file_name = "/Users/vikhyati/Desktop/OSHPD_CLEAN_SMALL.csv"
+featurize(base_file_name, "t.csv", '2009', '2010', 4)
+print invalid_zip
